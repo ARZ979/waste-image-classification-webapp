@@ -1,9 +1,3 @@
-# app.py
-# Waste Classification (Organic vs Recycle) — Streamlit Inference
-# UI: single-column (hasil di bawah input), kamera hanya aktif saat diminta,
-# threshold kelas R, grafik Altair, tema gelap/terang, kompatibel versi Streamlit lama/baru.
-# Perbaikan: Deteksi otomatis Rescaling(1./255) di dalam model untuk mencegah double-normalization.
-
 import os, json, traceback, inspect
 from typing import Tuple, Dict, Any, Optional
 import numpy as np
@@ -14,37 +8,40 @@ import altair as alt
 import tensorflow as tf
 from tensorflow.keras import layers
 
+# ----------------------------
 # Page config
+# ----------------------------
 st.set_page_config(
     page_title="Waste Classifier (O vs R)",
     page_icon="♻️",
     layout="centered",
 )
 
-# Theme & Palette
+# ----------------------------
+# Theme & palette
+# ----------------------------
 ACCENT_O = "#10b981"   # Organic (green)
 ACCENT_R = "#f59e0b"   # Recycle (amber)
 
-# Tema in-app agar kontras aman di dark/light
 if "theme_choice" not in st.session_state:
-    st.session_state.theme_choice = "Dark Slate (disarankan)"
+    st.session_state.theme_choice = "Dark Slate (recommended)"
 
 with st.sidebar:
-    st.header("Tampilan")
+    st.header("Appearance")
     st.session_state.theme_choice = st.selectbox(
-        "Mode tampilan", ["Dark Slate (disarankan)", "Eco Light"],
+        "Theme mode", ["Dark Slate (recommended)", "Eco Light"],
         index=0 if st.session_state.theme_choice.startswith("Dark") else 1,
-        help="Pilih mode tampilan agar kontras teks optimal."
+        help="Pick a theme with good text contrast."
     )
 
 if st.session_state.theme_choice.startswith("Dark"):
     COLORS = {
-        "bg": "#0f172a",      # slate-900
-        "text": "#e2e8f0",    # slate-200
-        "head": "#f8fafc",    # slate-50
-        "muted": "#cbd5e1",   # slate-300
-        "card": "#111827",    # gray-900
-        "border": "#1f2937",  # gray-800
+        "bg": "#0f172a",
+        "text": "#e2e8f0",
+        "head": "#f8fafc",
+        "muted": "#cbd5e1",
+        "card": "#111827",
+        "border": "#1f2937",
         "axis": "#e2e8f0",
         "grid": "#334155",
     }
@@ -70,17 +67,17 @@ st.markdown(
         --muted: {COLORS["muted"]};
         --card: {COLORS["card"]};
         --border: {COLORS["border"]};
-        --accentO: {ACCENT_O};
-        --accentR: {ACCENT_R};
       }}
       html, body, .stApp {{ background: var(--bg); color: var(--text); }}
       h1,h2,h3,h4,h5,h6 {{ color: var(--head) !important; }}
       p, span, label, .stMarkdown, .stCaption, .stText {{ color: var(--text) !important; }}
+
       /* Sidebar */
       [data-testid="stSidebar"] {{ background: #0b1220; color: var(--text); }}
       [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {{
         color: var(--head) !important;
       }}
+
       /* Cards */
       .wc-card {{
         background: var(--card); padding: 1rem 1.1rem; border-radius: 14px;
@@ -93,7 +90,6 @@ st.markdown(
       .wc-badge-r {{ background: {ACCENT_R}22; color: {ACCENT_R}; border:1px solid {ACCENT_R}66; }}
       .wc-note {{ color:var(--muted); font-size:0.88rem; }}
       .stButton>button {{ border-radius: 12px; padding: 0.5rem 1rem; }}
-      .stSlider>div>div>div>div {{ background: linear-gradient(90deg, {ACCENT_O}, {ACCENT_R}); }}
       .section-title {{ font-weight:800; font-size:1.1rem; margin: .1rem 0 .6rem; }}
       .hr-soft {{ height:1px; background: var(--border); margin: 1rem 0; border:0; }}
     </style>
@@ -102,14 +98,18 @@ st.markdown(
 )
 
 st.title("♻️ Waste Classifier — Organic vs Recycle")
-st.caption("Unggah gambar **atau** ambil foto dari **kamera** (mobile) → Sistem memprediksi **O**/**R** disertai probabilitas.")
+st.caption("Upload an image **or** take a photo with the **camera** → the system predicts **O**/**R** with probabilities.")
 
+# ----------------------------
 # Paths & constants
+# ----------------------------
 MODEL_PATH = os.getenv("MODEL_PATH", "waste_classifier_model.keras")
 LABELS_PATH = os.getenv("LABELS_PATH", "labels.json")
 IMG_SIZE: Tuple[int, int] = (224, 224)
 
-# C. Custom Layer (ECALayer)
+# ----------------------------
+# Custom layer (ECA) for model load
+# ----------------------------
 try:
     from keras.saving import register_keras_serializable  # Keras 3
 except Exception:
@@ -117,12 +117,10 @@ except Exception:
 
 @register_keras_serializable(package="Custom", name="ECALayer")
 class ECALayer(layers.Layer):
-    """Efficient Channel Attention (Wang et al., CVPR 2020)."""
     def __init__(self, gamma=2, b=1, **kwargs):
         super().__init__(**kwargs)
         self.gamma = gamma
         self.b = b
-        self.conv1d = None
 
     def build(self, input_shape):
         import numpy as _np
@@ -136,7 +134,7 @@ class ECALayer(layers.Layer):
     def call(self, x):
         y = tf.reduce_mean(x, axis=[1, 2], keepdims=False)  # (B, C)
         y = tf.expand_dims(y, axis=-1)                      # (B, C, 1)
-        y = self.conv1d(y)                                  # (B, C, 1)
+        y = self.conv1d(y)
         y = tf.nn.sigmoid(y)
         y = tf.squeeze(y, axis=-1)                          # (B, C)
         y = tf.reshape(y, (-1, 1, 1, tf.shape(y)[-1]))      # (B,1,1,C)
@@ -147,7 +145,9 @@ class ECALayer(layers.Layer):
         cfg.update({"gamma": self.gamma, "b": self.b})
         return cfg
 
+# ----------------------------
 # Utilities
+# ----------------------------
 def _supports_kw(func, name: str) -> bool:
     try:
         return name in inspect.signature(func).parameters
@@ -155,6 +155,7 @@ def _supports_kw(func, name: str) -> bool:
         return False
 
 def show_image_stretch(img, **kwargs):
+    """Prefer width='stretch' when available; fallback to use_container_width=True for older Streamlit."""
     try:
         if _supports_kw(st.image, "width"):
             st.image(img, width="stretch", **kwargs)
@@ -176,7 +177,7 @@ def show_altair_chart_stretch(chart):
 def load_model(model_path: str):
     if not os.path.exists(model_path):
         raise FileNotFoundError(
-            f"❌ Model tidak ditemukan di '{model_path}'. Pastikan file .keras sudah tersedia di repo/Cloud."
+            f"❌ Model file not found at '{model_path}'. Make sure the .keras file is present."
         )
     model = tf.keras.models.load_model(
         model_path,
@@ -207,13 +208,12 @@ def _fix_exif(im: Image.Image) -> Image.Image:
     except Exception:
         return im
 
-# --- DETEKSI RESCALING DI DALAM MODEL
 def _detect_internal_rescaling(m: tf.keras.Model) -> bool:
+    """True if the model contains a tf.keras.layers.Rescaling layer (e.g., 1./255)."""
     try:
         for lyr in m.layers:
             if isinstance(lyr, tf.keras.layers.InputLayer):
                 continue
-            # nested model
             if isinstance(lyr, tf.keras.Model):
                 if _detect_internal_rescaling(lyr):
                     return True
@@ -221,14 +221,12 @@ def _detect_internal_rescaling(m: tf.keras.Model) -> bool:
                 return True
         return False
     except Exception:
-        # jika gagal deteksi, default False
         return False
 
-# Placeholder; akan di-set setelah model diload
 HAS_INTERNAL_RESCALE = False
 
 def preprocess(im: Image.Image, size: Tuple[int, int] = (224, 224)) -> np.ndarray:
-    """Resize + (opsional) scaling /255"""
+    """Resize + optional /255 scaling only if the model does NOT include Rescaling."""
     im = _fix_exif(im).convert("RGB").resize(size)
     x = np.asarray(im, dtype=np.float32)
     if not HAS_INTERNAL_RESCALE:
@@ -236,25 +234,24 @@ def preprocess(im: Image.Image, size: Tuple[int, int] = (224, 224)) -> np.ndarra
     return x[None, ...]  # (1,H,W,3)
 
 def predict_one(model, x: np.ndarray) -> np.ndarray:
-    prob = model.predict(x, verbose=0)[0]  # softmax [p_O, p_R]
-    return prob
+    return model.predict(x, verbose=0)[0]  # softmax [p_O, p_R]
 
 def prob_chart(data, width=460, height=340):
-    """Altair v5-safe layering"""
+    """Altair v5-safe layered bar + text; config applied on the layer object."""
     domain = ["O", "R"]
     colors = [ACCENT_O, ACCENT_R]
     base_data = alt.Data(values=data)
 
     bars = (
         alt.Chart(base_data)
-        .mark_bar()
+        .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
         .encode(
-            x=alt.X("label:N", title="Kelas", sort=domain, axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("prob:Q", title="Probabilitas", scale=alt.Scale(domain=[0, 1])),
+            x=alt.X("label:N", title="Class", sort=domain, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("prob:Q", title="Probability", scale=alt.Scale(domain=[0, 1])),
             color=alt.Color("label:N", scale=alt.Scale(domain=domain, range=colors), legend=None),
             tooltip=[alt.Tooltip("label:N"), alt.Tooltip("prob:Q", format=".3f")],
         )
-        .properties(width=width, height=height, title="Probabilitas Prediksi")
+        .properties(width=width, height=height, title="Prediction Probabilities")
     )
 
     text = (
@@ -270,20 +267,24 @@ def prob_chart(data, width=460, height=340):
     return layered
 
 def show_error_box(err: Exception):
-    with st.expander("Rincian error (untuk debugging)"):
+    with st.expander("Error details (debug)"):
         st.code("".join(traceback.format_exception(err)), language="python")
 
-# Sidebar: Pengaturan model
+# ----------------------------
+# Sidebar: model settings
+# ----------------------------
 with st.sidebar:
-    st.header("Pengaturan")
-    thr = st.slider("Decision threshold untuk **R** (Recycle)", 0.0, 1.0, 0.50, 0.01)
-    st.caption("Jika Prob(R) ≥ threshold → Prediksi **R**, selain itu **O**.")
-    show_probs = st.toggle("Tampilkan grafik probabilitas", value=True)
+    st.header("Settings")
+    thr = st.slider("Decision threshold for **R** (Recycle)", 0.0, 1.0, 0.50, 0.01)
+    st.caption("If Prob(R) ≥ threshold → predict **R**, otherwise **O**.")
+    show_probs = st.toggle("Show probability chart", value=True)
     st.markdown('<div class="hr-soft"></div>', unsafe_allow_html=True)
-    st.caption("Tips kamera: kamera hanya aktif saat kamu klik *Aktifkan kamera*.")
+    st.caption("Camera tip: it only activates after you press **Enable camera**.")
 
+# ----------------------------
 # Load resources
-with st.spinner("Memuat model..."):
+# ----------------------------
+with st.spinner("Loading model..."):
     try:
         (model, n_params) = load_model(MODEL_PATH)
     except Exception as e:
@@ -291,7 +292,6 @@ with st.spinner("Memuat model..."):
         show_error_box(e)
         st.stop()
 
-# Deteksi apakah model sudah punya Rescaling internal
 HAS_INTERNAL_RESCALE = _detect_internal_rescaling(model)
 
 labels = load_labels(LABELS_PATH)
@@ -299,15 +299,17 @@ IDX2CLASS = labels["idx_to_class"]
 CLASS2IDX = {k: int(v) for k, v in labels["class_to_idx"].items()}
 
 if set(IDX2CLASS.values()) != {"O", "R"}:
-    st.warning("Labels tidak persis {'O','R'}. Menggunakan mapping dari 'labels.json'. Pastikan urutan output model sesuai.")
+    st.warning("Label set is not exactly {'O','R'}. Using mapping from labels.json. Ensure model output order matches.")
 
+# ----------------------------
 # INPUT (single-column)
+# ----------------------------
 st.markdown('<div class="wc-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">1) Input Gambar</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">1) Image Input</div>', unsafe_allow_html=True)
 
 mode = st.radio(
-    "Pilih sumber gambar:",
-    ["Upload", "Kamera"],
+    "Pick image source:",
+    ["Upload", "Camera"],
     horizontal=True,
 )
 
@@ -315,48 +317,49 @@ uploaded_file = None
 camera_image = None
 
 if mode == "Upload":
-    uploaded_file = st.file_uploader("Upload gambar (*.jpg, *.jpeg, *.png)", type=["jpg", "jpeg", "png"])
+    uploaded_file = st.file_uploader("Upload image (*.jpg, *.jpeg, *.png)", type=["jpg", "jpeg", "png"])
 else:
-    # Kamera hanya aktif saat user menekan tombol
     if "cam_enabled" not in st.session_state:
         st.session_state.cam_enabled = False
 
     col1, col2 = st.columns([1,1])
     with col1:
         if not st.session_state.cam_enabled:
-            if st.button("📷 Aktifkan kamera"):
+            if st.button("📷 Enable camera"):
                 st.session_state.cam_enabled = True
                 st.rerun()
         else:
-            if st.button("✖️ Matikan kamera"):
+            if st.button("✖️ Disable camera"):
                 st.session_state.cam_enabled = False
                 st.rerun()
     with col2:
-        st.caption("Kamera membutuhkan izin browser.")
+        st.caption("Browser permission is required for camera.")
 
     if st.session_state.cam_enabled:
-        camera_image = st.camera_input("Ambil foto dari kamera")
-        st.caption("Jika kamera tidak tampil, cek izin browser & perangkat.")
+        camera_image = st.camera_input("Take a photo")
+        st.caption("If the camera is not shown, check browser/device permissions.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# HASIL PREDIKSI (di bawah input)
+# ----------------------------
+# RESULTS (below input)
+# ----------------------------
 st.markdown('<div class="wc-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">2) Hasil Prediksi</div>', unsafe_allow_html=True)
-st.caption("Prediksi & probabilitas akan muncul setelah gambar dipilih/dipotret.")
+st.markdown('<div class="section-title">2) Prediction</div>', unsafe_allow_html=True)
+st.caption("Results & probabilities appear after you select or capture an image.")
 
 selected_image: Optional[Image.Image] = None
 source = None
 
 try:
-    if mode == "Kamera" and camera_image is not None:
+    if mode == "Camera" and camera_image is not None:
         selected_image = Image.open(camera_image)
         source = "camera"
     elif mode == "Upload" and uploaded_file is not None:
         selected_image = Image.open(uploaded_file)
         source = "upload"
 except UnidentifiedImageError as e:
-    st.error("Format gambar tidak dikenali. Coba file lain.")
+    st.error("Unsupported or corrupt image. Please try another file.")
     show_error_box(e)
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
@@ -366,18 +369,16 @@ if selected_image is not None:
         x = preprocess(selected_image, IMG_SIZE)
         prob = predict_one(model, x)  # [p_O, p_R]
         if len(prob) < 2:
-            raise RuntimeError("Output model tidak berukuran 2 kelas. Pastikan model sesuai (O,R).")
+            raise RuntimeError("Model output does not have 2 classes. Expected order (O, R).")
         p_O, p_R = float(prob[0]), float(prob[1])
         pred = "R" if p_R >= thr else "O"
         conf = p_R if pred == "R" else p_O
 
         badge_html = f'<span class="wc-badge wc-badge-{"r" if pred=="R" else "o"}">{pred}</span>'
 
-        # Tampilkan gambar
-        show_image_stretch(_fix_exif(selected_image), caption=f"Sumber: {source}")
+        show_image_stretch(_fix_exif(selected_image), caption=f"Source: {source}")
 
-        # Tampilkan hasil
-        st.markdown(f"### Prediksi: {badge_html}", unsafe_allow_html=True)
+        st.markdown(f"### Prediction: {badge_html}", unsafe_allow_html=True)
         st.markdown(f"**Confidence:** {conf:.2f}")
 
         if show_probs:
@@ -385,33 +386,35 @@ if selected_image is not None:
                 prob_chart([{"label": "O", "prob": p_O}, {"label": "R", "prob": p_R}])
             )
 
-        with st.expander("Detail angka"):
+        with st.expander("Numeric details"):
             st.write(
                 {
                     "p(O)": round(p_O, 4),
                     "p(R)": round(p_R, 4),
                     "threshold_R": round(thr, 2),
-                    "keputusan": pred,
+                    "decision": pred,
                     "has_internal_rescaling": HAS_INTERNAL_RESCALE,
                 }
             )
     except Exception as e:
-        st.error("Terjadi kesalahan saat memproses gambar.")
+        st.error("An error occurred while processing the image.")
         show_error_box(e)
 else:
-    st.info("Unggah gambar atau aktifkan kamera lalu ambil foto untuk memulai prediksi.")
+    st.info("Upload an image or enable the camera to start a prediction.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ----------------------------
 # Footer
-with st.expander("ℹ️ Tentang & Catatan Teknis"):
+# ----------------------------
+with st.expander("ℹ️ About & Technical Notes"):
     st.markdown(
         f"""
-        - **Model**: Keras (`.keras`) kustom dengan blok Depthwise-Separable + ECA.
-        - **Preprocessing**: Deteksi otomatis **Rescaling(1./255)** di dalam model → app menyesuaikan agar tidak double-normalization.
-        - **Labels**: `labels.json` dengan `idx_to_class` & `class_to_idx`. Default fallback `{{0:'O', 1:'R'}}`.
-        - **Parameter**: ~{('{:,}'.format(n_params)) if n_params else '—'} trainable params.
-        - **Keputusan**: threshold pada kelas **R** (Recycle) agar mudah dikalibrasi.
-        - **Perangkat**: Kamera hanya aktif saat tombol **Aktifkan kamera** ditekan.
+        - **Model**: Custom Keras (`.keras`) with Depthwise-Separable blocks + ECA.
+        - **Preprocessing**: Auto-detect internal **Rescaling(1./255)** — app adapts to avoid double-normalization.
+        - **Labels**: `labels.json` with `idx_to_class` & `class_to_idx` (default `{{0:'O', 1:'R'}}`).
+        - **Parameters**: ~{('{:,}'.format(n_params)) if n_params else '—'} trainable params.
+        - **Decision rule**: threshold on class **R** (Recycle) for easy field calibration.
+        - **Camera**: Only activates after pressing **Enable camera**.
         """
     )
