@@ -29,11 +29,9 @@ Camera capture is **permission‑based** (not auto‑on). Layout is **single col
 .
 ├─ app.py                          # Streamlit app (single-column; camera on-demand)
 ├─ labels.json                     # Class mapping: {"idx_to_class": {"0":"O","1":"R"}, "class_to_idx":{"O":0,"R":1}}
-├─ waste-classfication-final.ipynb # Colab notebook for training & export (.keras)
 ├─ waste_classifier_model.keras    # Trained model (optional: store as release asset)
 ├─ README.md                       # This file
-├─ requirements.txt                # (optional) see Dependencies
-└─ assets/                         # (optional) screenshots, demo images, logo
+├─ requirements.txt                # see Dependencies
 ```
 
 > Large model files are better released as **GitHub Release assets** or stored externally; then point `MODEL_PATH` to the URL/path.
@@ -66,10 +64,10 @@ Please follow the dataset license and terms.
 
 Populate with the latest results from the Colab notebook:
 
-| Split | Accuracy | F1 (macro) | ROC‑AUC | Notes |
-|------:|---------:|-----------:|--------:|------|
-| Val   |  _xx.x%_ |   _xx.x%_  | _0.xxx_ | |
-| Test  |  _xx.x%_ |   _xx.x%_  | _0.xxx_ | |
+| Split | Accuracy | AUC-PR | AUC‑ROC |
+|------:|---------:|-----------:|--------:|
+| Train   |  _91.4%_ |   _0.947_  | _0.854_ |
+| Val  |  _91.9%_ |   _0.972_  | _0.974_ |
 
 Consider including **per‑class metrics** and a **confusion matrix** at the chosen threshold.
 
