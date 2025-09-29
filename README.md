@@ -19,8 +19,6 @@ Camera capture is **permission‑based** (not auto‑on). Layout is **single col
 - ✅ **Documentation**: short Chapter 3 (BAB 3) + this **README**.
 - ✅ **Support** until thesis completion (non‑feature changes).
 
-> Bahasa Indonesia is used in the UI labels and docs where helpful.
-
 ---
 
 ## 🗂 Repository Structure
@@ -33,8 +31,6 @@ Camera capture is **permission‑based** (not auto‑on). Layout is **single col
 ├─ README.md                       # This file
 ├─ requirements.txt                # see Dependencies
 ```
-
-> Large model files are better released as **GitHub Release assets** or stored externally; then point `MODEL_PATH` to the URL/path.
 
 ---
 
